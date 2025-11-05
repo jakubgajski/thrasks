@@ -441,12 +441,36 @@ Run the test suite:
 # Install dev dependencies
 pip install -e ".[dev]"
 
-# Run tests
-pytest
+# Run all tests (excluding performance benchmarks)
+pytest -m "not benchmark"
 
 # Run with coverage
-pytest --cov=thrasks --cov-report=term-missing
+pytest -m "not benchmark" --cov=thrasks --cov-report=term-missing
+
+# Run performance benchmarks
+pytest -m benchmark -v -s
+
+# Run specific performance test
+pytest tests/test_performance.py::test_performance_summary -v -s
 ```
+
+### Performance Benchmarks
+
+The library includes comprehensive performance tests comparing thrasks with standard asyncio:
+
+- **CPU-intensive workloads**: Hashing, JSON processing, calculations
+- **I/O-bound workloads**: Sleep operations, network simulation
+- **Mixed workloads**: Combined I/O and CPU operations
+- **Scaling tests**: Performance across different thread counts
+- **Real-world scenarios**: API request processing with heavy computation
+
+Run all benchmarks:
+
+```bash
+pytest -m benchmark -v -s
+```
+
+**Note**: Performance benefits are most visible when running with Python's free-threaded mode (`python3.14t`). Without free-threading, the GIL limits true parallelism for CPU-bound tasks.
 
 ## Contributing
 
