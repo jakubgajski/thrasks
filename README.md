@@ -679,20 +679,20 @@ async with ThreadedTaskGroup(num_threads=num_threads) as tg:
 
 ## Comparison with asyncio
 
-| Feature | asyncio.TaskGroup | ThreadedTaskGroup |
-|---------|-------------------|-------------------|
-| Thread model | Single thread | Multiple threads |
-| Parallelism | Concurrent (I/O) | Parallel (CPU + I/O) |
-| GIL impact | Blocked by GIL | Bypassed with free-threading |
-| Overhead | Minimal | Thread creation/coordination |
-| API compatibility |  |  |
+| Feature           | asyncio.TaskGroup | ThreadedTaskGroup            |
+|-------------------|-------------------|------------------------------|
+| Thread model      | Single thread     | Multiple threads             |
+| Parallelism       | Concurrent (I/O)  | Parallel (CPU + I/O)         |
+| GIL impact        | Blocked by GIL    | Bypassed with free-threading |
+| Overhead          | Minimal           | Thread creation/coordination |
+| API compatibility | ✓                 | ✓                            |
 
-| Feature | asyncio.gather | threaded_gather |
-|---------|----------------|-----------------|
-| Thread model | Single thread | Multiple threads |
-| Parallelism | Concurrent (I/O) | Parallel (CPU + I/O) |
-| Task support |  |  (falls back to asyncio.gather) |
-| API compatibility |  |  |
+| Feature           | asyncio.gather   | threaded_gather                  |
+|-------------------|------------------|----------------------------------|
+| Thread model      | Single thread    | Multiple threads                 |
+| Parallelism       | Concurrent (I/O) | Parallel (CPU + I/O)             |
+| Task support      | ✓                | ✓ (falls back to asyncio.gather) |
+| API compatibility | ✓                | ✓                                |
 
 ## Testing
 
