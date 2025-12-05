@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from thrasks import ThreadedTaskGroup, threaded_gather
+from thrasks import SchedulingMode, ThreadedTaskGroup, threaded_gather
 
 logger = logging.getLogger(__name__)
 
@@ -94,12 +94,12 @@ async def test_performance_cpu_json():
 
     speedup = asyncio_time / thrasks_time
 
-    logger.info("=" * 60)
+    logger.info("=" * 10)
     logger.info("CPU-Intensive JSON Processing (%d tasks, %d iterations)", num_tasks, iterations)
-    logger.info("=" * 60)
+    logger.info("=" * 10)
     logger.info("asyncio.gather:         %.3fs (baseline)", asyncio_time)
     logger.info("thrasks (2 threads):    %.3fs (%.2fx)", thrasks_time, speedup)
-    logger.info("=" * 60)
+    logger.info("=" * 10)
 
     # CPU-bound calculations should be faster with thrasks
     assert speedup > 1.5, f"Expected thrasks to be at least 1.5x faster, got {speedup:.2f}x"
@@ -131,12 +131,12 @@ async def test_performance_fibonacci():
 
     speedup = asyncio_time / thrasks_time
 
-    logger.info("=" * 60)
+    logger.info("=" * 10)
     logger.info("CPU-Intensive Fibonacci (%d tasks)", num_tasks)
-    logger.info("=" * 60)
+    logger.info("=" * 10)
     logger.info("asyncio.gather:         %.3fs (baseline)", asyncio_time)
     logger.info("thrasks (2 threads):    %.3fs (%.2fx)", thrasks_time, speedup)
-    logger.info("=" * 60)
+    logger.info("=" * 10)
 
     # CPU-bound calculations should be faster with thrasks
     assert speedup > 1.5, f"Expected thrasks to be at least 1.5x faster, got {speedup:.2f}x"
@@ -168,13 +168,13 @@ async def test_performance_io_bound():
 
     overhead_ratio = thrasks_time / asyncio_time
 
-    logger.info("=" * 60)
+    logger.info("=" * 10)
     logger.info("I/O-Bound Sleep (%d tasks, %.2fs each)", num_tasks, sleep_time)
-    logger.info("=" * 60)
+    logger.info("=" * 10)
     logger.info("asyncio.gather:         %.3fs (baseline)", asyncio_time)
     logger.info("thrasks (2 threads):    %.3fs (%.2fx)", thrasks_time, asyncio_time / thrasks_time)
     logger.info("Note: For pure I/O, asyncio should be similar or faster (less overhead)")
-    logger.info("=" * 60)
+    logger.info("=" * 10)
 
     # For pure I/O, thrasks shouldn't be much slower (max 3x overhead)
     assert overhead_ratio < 3.0, f"Expected thrasks overhead to be less than 3x for I/O, got {overhead_ratio:.2f}x"
@@ -206,14 +206,14 @@ async def test_performance_thread_locked_sleep():
 
     speedup = asyncio_time / thrasks_time
 
-    logger.info("=" * 60)
+    logger.info("=" * 10)
     logger.info("Thread-Locked Sleep (%d tasks, %.1fs each)", num_tasks, sleep_time)
-    logger.info("=" * 60)
+    logger.info("=" * 10)
     logger.info("asyncio.gather:         %.3fs (runs sequentially!)", asyncio_time)
     logger.info("thrasks (2 threads):    %.3fs (%.2fx)", thrasks_time, speedup)
     logger.info("Note: time.sleep() blocks the event loop in asyncio but not in thrasks")
     logger.info("      thrasks executes blocking operations in parallel threads")
-    logger.info("=" * 60)
+    logger.info("=" * 10)
 
     # Blocking sleep should be MUCH faster with thrasks (at least 3x for 4 threads with 20 tasks)
     assert speedup > 1.5, f"Expected thrasks to be at least 3x faster for blocking sleep, got {speedup:.2f}x"
@@ -246,12 +246,12 @@ async def test_performance_mixed_workload():
 
     speedup = asyncio_time / thrasks_time
 
-    logger.info("=" * 60)
+    logger.info("=" * 10)
     logger.info("Mixed I/O + CPU Workload (%d tasks)", num_tasks)
-    logger.info("=" * 60)
+    logger.info("=" * 10)
     logger.info("asyncio.gather:         %.3fs (baseline)", asyncio_time)
     logger.info("thrasks (2 threads):    %.3fs (%.2fx)", thrasks_time, speedup)
-    logger.info("=" * 60)
+    logger.info("=" * 10)
 
     # Mixed workload should benefit from thrasks (at least 1.3x speedup)
     assert speedup > 1.3, f"Expected thrasks to be at least 1.3x faster for mixed workload, got {speedup:.2f}x"
@@ -288,12 +288,12 @@ async def test_performance_task_group_cpu():
 
     speedup = asyncio_time / thrasks_time
 
-    logger.info("=" * 60)
+    logger.info("=" * 10)
     logger.info("TaskGroup CPU Fibonacci (%d tasks)", num_tasks)
-    logger.info("=" * 60)
+    logger.info("=" * 10)
     logger.info("asyncio.TaskGroup:      %.3fs (baseline)", asyncio_time)
     logger.info("ThreadedTaskGroup (2 threads):  %.3fs (%.2fx)", thrasks_time, speedup)
-    logger.info("=" * 60)
+    logger.info("=" * 10)
 
     # CPU-bound calculations should be faster with ThreadedTaskGroup
     assert speedup > 1.5, f"Expected ThreadedTaskGroup to be at least 1.5x faster, got {speedup:.2f}x"
@@ -318,17 +318,17 @@ async def test_performance_scaling():
         elapsed = time.perf_counter() - start
         results[num_threads] = elapsed
 
-    logger.info("=" * 60)
+    logger.info("=" * 10)
     logger.info("Thread Scaling Performance (%d tasks)", num_tasks)
-    logger.info("=" * 60)
+    logger.info("=" * 10)
     baseline = results[1]
     for num_threads in thread_counts:
         elapsed = results[num_threads]
         speedup = baseline / elapsed
         logger.info("%2d thread(s):  %.3fs  (speedup: %.2fx)", num_threads, elapsed, speedup)
-    logger.info("=" * 60)
+    logger.info("=" * 10)
     logger.info("Note: Speedup depends on free-threading being enabled")
-    logger.info("=" * 60)
+    logger.info("=" * 10)
 
     # With free-threading, we should see good speedup with more threads
     speedup_4 = baseline / results[4]
@@ -366,15 +366,15 @@ async def test_performance_overhead():
 
     overhead_ratio = thrasks_time / asyncio_time
 
-    logger.info("=" * 60)
+    logger.info("=" * 10)
     logger.info("Overhead Test - Trivial Tasks (%d tasks)", num_tasks)
-    logger.info("=" * 60)
+    logger.info("=" * 10)
     logger.info("asyncio.gather:         %.4fs (baseline)", asyncio_time)
     logger.info("thrasks (2 threads):    %.4fs (overhead: %.2fx)", thrasks_time, overhead_ratio)
-    logger.info("=" * 60)
+    logger.info("=" * 10)
     logger.info("Note: thrasks has higher overhead for trivial tasks")
     logger.info("      Use asyncio for simple/fast operations")
-    logger.info("=" * 60)
+    logger.info("=" * 10)
 
     # For trivial tasks, overhead shouldn't be excessive (max 50x)
     assert overhead_ratio < 50.0, f"Expected thrasks overhead to be less than 50x for trivial tasks, got {overhead_ratio:.2f}x"
@@ -427,14 +427,14 @@ async def test_performance_real_world_scenario():
 
     speedup = asyncio_time / thrasks_time
 
-    logger.info("=" * 60)
+    logger.info("=" * 10)
     logger.info("Real-World Scenario: API + Heavy Processing (%d requests)", num_requests)
-    logger.info("=" * 60)
+    logger.info("=" * 10)
     logger.info("asyncio.gather:         %.3fs (baseline)", asyncio_time)
     logger.info("thrasks (2 threads):    %.3fs (%.2fx)", thrasks_time, speedup)
-    logger.info("=" * 60)
+    logger.info("=" * 10)
     logger.info("This simulates: network I/O + JSON processing + Fibonacci calculation")
-    logger.info("=" * 60)
+    logger.info("=" * 10)
 
     # Real-world mixed workload should benefit from thrasks
     assert speedup > 1.5, f"Expected thrasks to be at least 1.5x faster for real-world scenario, got {speedup:.2f}x"
@@ -445,11 +445,67 @@ async def test_performance_real_world_scenario():
 
 @pytest.mark.asyncio
 @pytest.mark.benchmark
+async def test_performance_queue_vs_round_robin():
+    """Compare QUEUE mode vs ROUND_ROBIN mode with uneven workload."""
+    num_tasks = 30
+    num_threads = 4
+
+    # Create uneven workload: some fast tasks, some slow tasks
+    async def uneven_task(task_id: int) -> int:
+        """Task with variable workload."""
+        # Every 2nd task is slow
+        if task_id % 2 == 0:
+            fib_n = 12000
+        else:
+            fib_n = 6000
+
+        result = await cpu_fibonacci(fib_n)
+        return result
+
+    # Test with ROUND_ROBIN mode
+    start = time.perf_counter()
+    rr_results = await threaded_gather(
+        *[uneven_task(i) for i in range(num_tasks)],
+        num_threads=num_threads,
+        mode=SchedulingMode.ROUND_ROBIN,
+    )
+    rr_time = time.perf_counter() - start
+
+    # Test with QUEUE mode
+    start = time.perf_counter()
+    queue_results = await threaded_gather(
+        *[uneven_task(i) for i in range(num_tasks)],
+        num_threads=num_threads,
+        mode=SchedulingMode.QUEUE,
+    )
+    queue_time = time.perf_counter() - start
+
+    assert rr_results == queue_results
+
+    speedup = rr_time / queue_time
+
+    logger.info("=" * 10)
+    logger.info("Scheduling Mode Comparison: Uneven Workload (%d tasks, %d threads)", num_tasks, num_threads)
+    logger.info("=" * 10)
+    logger.info("ROUND_ROBIN mode:       %.3fs (baseline)", rr_time)
+    logger.info("QUEUE mode:             %.3fs (%.2fx)", queue_time, speedup)
+    logger.info("=" * 10)
+    logger.info("Note: QUEUE mode should be faster for uneven workloads")
+    logger.info("      as threads pick up new work as soon as they finish")
+    logger.info("=" * 10)
+
+    # QUEUE mode should be at least as fast as ROUND_ROBIN for uneven workload
+    # In the best case, it can be significantly faster (1.1x+)
+    assert speedup >= 0.8, f"Expected QUEUE mode to be competitive with ROUND_ROBIN, got {speedup:.2f}x"
+
+
+@pytest.mark.asyncio
+@pytest.mark.benchmark
 async def test_performance_summary():
     """Run a quick summary of key performance comparisons."""
-    logger.info("=" * 70)
+    logger.info("=" * 10)
     logger.info("THRASKS PERFORMANCE SUMMARY")
-    logger.info("=" * 70)
+    logger.info("=" * 10)
 
     # Quick CPU test
     num_tasks = 12
@@ -476,9 +532,9 @@ async def test_performance_summary():
 
     logger.info("I/O-Bound (Sleep): asyncio=%.3fs  thrasks=%.3fs  (%.2fx)", asyncio_time, thrasks_time, asyncio_time / thrasks_time)
 
-    logger.info("=" * 70)
+    logger.info("=" * 10)
     logger.info("RECOMMENDATIONS:")
     logger.info("  • Use thrasks for CPU-intensive async operations (with free-threading)")
     logger.info("  • Use asyncio for pure I/O-bound operations (lower overhead)")
     logger.info("  • Use thrasks for mixed I/O + CPU workloads")
-    logger.info("=" * 70)
+    logger.info("=" * 10)

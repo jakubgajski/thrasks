@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from thrasks import threaded_gather
+from thrasks import threaded_gather, SchedulingMode
 
 
 @pytest.mark.asyncio
@@ -298,3 +298,138 @@ async def test_gather_api_compatibility():
     )
     assert results_with_exc[0] == 2
     assert isinstance(results_with_exc[1], ValueError)
+
+
+@pytest.mark.asyncio
+async def test_gather_queue_mode_basic():
+    """Test basic gather with queue mode."""
+
+    async def worker(value: int) -> int:
+        await asyncio.sleep(0.01)
+        return value * 2
+
+    results = await threaded_gather(
+        worker(1),
+        worker(2),
+        worker(3),
+        num_threads=2,
+        mode=SchedulingMode.QUEUE,
+    )
+
+    assert results == [2, 4, 6]
+
+
+@pytest.mark.asyncio
+async def test_gather_queue_mode_concurrent():
+    """Test that queue mode runs tasks concurrently."""
+    start_time = time.time()
+
+    async def sleeper(duration: float) -> float:
+        await asyncio.sleep(duration)
+        return duration
+
+    results = await threaded_gather(
+        sleeper(0.1),
+        sleeper(0.1),
+        sleeper(0.1),
+        num_threads=3,
+        mode=SchedulingMode.QUEUE,
+    )
+
+    elapsed = time.time() - start_time
+
+    # Should complete in ~0.1s if concurrent, not 0.3s
+    assert elapsed < 0.2, f"Tasks took {elapsed}s, expected < 0.2s"
+    assert results == [0.1, 0.1, 0.1]
+
+
+@pytest.mark.asyncio
+async def test_gather_queue_mode_uneven_workload():
+    """Test queue mode with uneven workload."""
+    thread_usage = {}
+    lock = threading.Lock()
+
+    async def variable_work(value: int) -> int:
+        tid = threading.get_ident()
+        with lock:
+            thread_usage[tid] = thread_usage.get(tid, 0) + 1
+
+        # Variable sleep times
+        sleep_time = 0.001 if value % 3 == 0 else 0.05
+        await asyncio.sleep(sleep_time)
+        return value
+
+    results = await threaded_gather(
+        *[variable_work(i) for i in range(15)],
+        num_threads=3,
+        mode=SchedulingMode.QUEUE,
+    )
+
+    assert results == list(range(15))
+
+    # In queue mode, threads should pick up work as they finish
+    assert len(thread_usage) == 3
+
+
+@pytest.mark.asyncio
+async def test_gather_queue_mode_with_exception():
+    """Test queue mode with exception."""
+
+    async def failing_worker():
+        await asyncio.sleep(0.01)
+        raise ValueError("Test error")
+
+    async def normal_worker():
+        await asyncio.sleep(0.02)
+        return "success"
+
+    with pytest.raises(ValueError, match="Test error"):
+        await threaded_gather(
+            failing_worker(),
+            normal_worker(),
+            num_threads=2,
+            mode=SchedulingMode.QUEUE,
+        )
+
+
+@pytest.mark.asyncio
+async def test_gather_queue_mode_return_exceptions():
+    """Test queue mode with return_exceptions=True."""
+
+    async def failing_worker():
+        await asyncio.sleep(0.01)
+        raise ValueError("Test error")
+
+    async def normal_worker():
+        await asyncio.sleep(0.02)
+        return "success"
+
+    results = await threaded_gather(
+        normal_worker(),
+        failing_worker(),
+        normal_worker(),
+        num_threads=2,
+        mode=SchedulingMode.QUEUE,
+        return_exceptions=True,
+    )
+
+    assert results[0] == "success"
+    assert isinstance(results[1], ValueError)
+    assert results[2] == "success"
+
+
+@pytest.mark.asyncio
+async def test_gather_queue_mode_many_tasks():
+    """Test queue mode with many tasks."""
+
+    async def worker(value: int) -> int:
+        await asyncio.sleep(0.001)
+        return value
+
+    results = await threaded_gather(
+        *[worker(i) for i in range(100)],
+        num_threads=4,
+        mode=SchedulingMode.QUEUE,
+    )
+
+    assert results == list(range(100))
