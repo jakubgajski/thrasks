@@ -1,25 +1,40 @@
 """Core implementation of thrasks - threaded task groups and gather."""
 
 import asyncio
+import queue
 import threading
 from collections.abc import Coroutine
 from contextvars import Context
+from enum import Enum
 from typing import Any, TypeVar
 
-__all__ = ["ThreadedTaskGroup", "threaded_gather"]
+__all__ = ["ThreadedTaskGroup", "threaded_gather", "SchedulingMode"]
 
 T = TypeVar("T")
+
+
+class SchedulingMode(Enum):
+    """Scheduling mode for distributing tasks across threads."""
+
+    ROUND_ROBIN = "round_robin"
+    QUEUE = "queue"
 
 
 class _ThreadEventLoop:
     """Manages an event loop running in a dedicated thread."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        work_queue: queue.Queue[tuple[Coroutine[Any, Any, Any], asyncio.Future[Any], asyncio.AbstractEventLoop | None, str | None, Context | None] | None] | None = None,
+    ) -> None:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.thread: threading.Thread | None = None
         self._ready_event = threading.Event()
         self._stop_event = threading.Event()
         self._tasks: list[asyncio.Task[Any]] = []
+        self._work_queue = work_queue
+        self._queue_consumer_task: asyncio.Task[None] | None = None
 
     def start(self) -> None:
         """Start the event loop in a new thread."""
@@ -42,11 +57,27 @@ class _ThreadEventLoop:
 
         self.loop.close()
 
+    async def _consume_work_queue(self) -> None:
+        """Consume tasks from work queue until None is received."""
+        while True:
+            item = await asyncio.get_event_loop().run_in_executor(
+                None, self._work_queue.get
+            )
+            if item is None:
+                break
+
+            coro, future, caller_loop, name, context = item
+            self._schedule_task(coro, future, caller_loop, name, context)
+
     def _run_loop(self) -> None:
         """Run the event loop (executed in thread)."""
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
         self._ready_event.set()
+
+        # Start queue consumer if we have a work queue
+        if self._work_queue is not None:
+            self._queue_consumer_task = self.loop.create_task(self._consume_work_queue())
 
         # Keep the loop running until stop is requested
         try:
@@ -204,7 +235,9 @@ class ThreadedTaskGroup:
     Async context manager that distributes tasks across multiple threads.
 
     Similar to asyncio.TaskGroup but runs tasks in a pool of threads,
-    each with its own event loop. Tasks are submitted round-robin fashion.
+    each with its own event loop. Supports two scheduling modes:
+    - ROUND_ROBIN: Tasks assigned to threads in round-robin fashion (default)
+    - QUEUE: Tasks placed in a queue consumed by threads as they finish work
 
     Example:
         async with ThreadedTaskGroup(num_threads=4) as tg:
@@ -212,31 +245,44 @@ class ThreadedTaskGroup:
             tg.create_task(another_coroutine())
     """
 
-    def __init__(self, num_threads: int = 4, *, _cancel_on_error: bool = True) -> None:
+    def __init__(
+        self,
+        num_threads: int = 4,
+        *,
+        mode: SchedulingMode = SchedulingMode.ROUND_ROBIN,
+        _cancel_on_error: bool = True,
+    ) -> None:
         """
         Initialize the threaded task group.
 
         Args:
             num_threads: Number of threads to use for running tasks
+            mode: Scheduling mode (ROUND_ROBIN or QUEUE)
             _cancel_on_error: Internal parameter to control cancellation behavior
         """
         if num_threads < 1:
             raise ValueError("num_threads must be at least 1")
 
         self._num_threads = num_threads
+        self._mode = mode
         self._threads: list[_ThreadEventLoop] = []
         self._tasks: list[asyncio.Future[Any]] = []
         self._next_thread_idx = 0
         self._entered = False
         self._cancel_on_error = _cancel_on_error
+        self._work_queue: queue.Queue[tuple[Coroutine[Any, Any, Any], asyncio.Future[Any], asyncio.AbstractEventLoop | None, str | None, Context | None] | None] | None = None
 
     async def __aenter__(self) -> "ThreadedTaskGroup":
         """Enter the context manager and start threads."""
         self._entered = True
 
+        # Create work queue if using QUEUE mode
+        if self._mode == SchedulingMode.QUEUE:
+            self._work_queue = queue.Queue()
+
         # Start all thread event loops
         for _ in range(self._num_threads):
-            thread_loop = _ThreadEventLoop()
+            thread_loop = _ThreadEventLoop(work_queue=self._work_queue)
             thread_loop.start()
             self._threads.append(thread_loop)
 
@@ -335,6 +381,11 @@ class ThreadedTaskGroup:
             else:
                 await asyncio.gather(*self._tasks, return_exceptions=True)
         finally:
+            # Signal queue consumers to stop
+            if self._work_queue is not None:
+                for _ in range(self._num_threads):
+                    self._work_queue.put(None)
+
             for thread in self._threads:
                 thread.stop()
 
@@ -348,7 +399,8 @@ class ThreadedTaskGroup:
         """
         Create a task from a coroutine and submit it to a thread.
 
-        Tasks are distributed round-robin across available threads.
+        In ROUND_ROBIN mode: tasks distributed round-robin across threads
+        In QUEUE mode: tasks placed in queue for threads to consume
 
         Args:
             coro: The coroutine to run
@@ -361,13 +413,26 @@ class ThreadedTaskGroup:
         if not self._entered:
             raise RuntimeError("ThreadedTaskGroup must be used in async with statement")
 
-        # Select next thread (round-robin)
-        thread = self._threads[self._next_thread_idx]
-        self._next_thread_idx = (self._next_thread_idx + 1) % self._num_threads
+        # Create future in the calling thread's event loop
+        try:
+            caller_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            caller_loop = None
 
-        # Submit coroutine to the selected thread
-        future = thread.submit_coroutine(coro, name=name, context=context)
+        future: asyncio.Future[T] = (
+            caller_loop.create_future() if caller_loop else asyncio.Future()
+        )
         self._tasks.append(future)
+
+        if self._mode == SchedulingMode.QUEUE:
+            # Add to work queue
+            self._work_queue.put((coro, future, caller_loop, name, context))
+        else:
+            # Round-robin scheduling
+            thread = self._threads[self._next_thread_idx]
+            self._next_thread_idx = (self._next_thread_idx + 1) % self._num_threads
+            future = thread.submit_coroutine(coro, name=name, context=context)
+            self._tasks[-1] = future
 
         return future
 
@@ -376,17 +441,19 @@ async def threaded_gather(
     *aws: Coroutine[Any, Any, Any] | asyncio.Task[Any],
     num_threads: int = 4,
     return_exceptions: bool = False,
+    mode: SchedulingMode = SchedulingMode.ROUND_ROBIN,
 ) -> list[Any]:
     """
     Run awaitables concurrently across multiple threads.
 
-    If passed coroutines, distributes them round-robin across threads.
+    If passed coroutines, distributes them across threads using specified mode.
     If passed tasks, behaves like asyncio.gather.
 
     Args:
         *aws: Awaitables (coroutines or tasks) to run
         num_threads: Number of threads to use (only for coroutines)
         return_exceptions: If True, exceptions are returned as results
+        mode: Scheduling mode (ROUND_ROBIN or QUEUE)
 
     Returns:
         List of results from all awaitables
@@ -394,7 +461,8 @@ async def threaded_gather(
     Example:
         results = await threaded_gather(
             coro1(), coro2(), coro3(),
-            num_threads=2
+            num_threads=2,
+            mode=SchedulingMode.QUEUE
         )
     """
     if not aws:
@@ -422,7 +490,7 @@ async def threaded_gather(
     # All are coroutines - use threaded task group
     # Use ThreadedTaskGroup which handles all the waiting and exception collection
     # When return_exceptions=True, don't cancel tasks on error
-    async with ThreadedTaskGroup(num_threads=num_threads, _cancel_on_error=not return_exceptions) as tg:
+    async with ThreadedTaskGroup(num_threads=num_threads, mode=mode, _cancel_on_error=not return_exceptions) as tg:
         futures = [tg.create_task(coro) for coro in aws]
 
     # Collect results from futures
