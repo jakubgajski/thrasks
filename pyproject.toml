@@ -1,13 +1,27 @@
 [project]
 name = "thrasks"
-version = "0.1.0"
+version = "0.1.0post1"
 description = "Threaded async tasks for free-threaded Python 3.14 - run coroutines across thread pools"
 readme = "README.md"
 authors = [
     { name = "Jakub Gajski", email = "jakub.gajski@gmail.com" }
 ]
 requires-python = ">=3.14"
+license = "MIT"
+keywords = [
+    "concurrency",
+    "parallelism",
+    "concurrent",
+    "parallel",
+    "task",
+    "threads",
+    "threading",
+    "async"
+]
 dependencies = []
+
+[project.urls]
+Repository = "https://github.com/jakubgajski/thrasks"
 
 [project.optional-dependencies]
 dev = [
