@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from thrasks import ThreadedTaskGroup
+from thrasks import ThreadedTaskGroup, SchedulingMode
 
 
 @pytest.mark.asyncio
@@ -247,3 +247,147 @@ async def test_single_thread():
         tg.create_task(worker(3))
 
     assert sorted(results) == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_queue_mode_basic():
+    """Test basic task execution in queue mode."""
+    results = []
+
+    async def worker(value: int) -> int:
+        results.append(value)
+        return value * 2
+
+    async with ThreadedTaskGroup(num_threads=2, mode=SchedulingMode.QUEUE) as tg:
+        tg.create_task(worker(1))
+        tg.create_task(worker(2))
+        tg.create_task(worker(3))
+
+    assert sorted(results) == [1, 2, 3]
+
+
+@pytest.mark.asyncio
+async def test_queue_mode_return_values():
+    """Test that task results are properly returned in queue mode."""
+
+    async def worker(value: int) -> int:
+        await asyncio.sleep(0.01)
+        return value * 2
+
+    async with ThreadedTaskGroup(num_threads=2, mode=SchedulingMode.QUEUE) as tg:
+        f1 = tg.create_task(worker(1))
+        f2 = tg.create_task(worker(2))
+        f3 = tg.create_task(worker(3))
+
+    assert await f1 == 2
+    assert await f2 == 4
+    assert await f3 == 6
+
+
+@pytest.mark.asyncio
+async def test_queue_mode_work_stealing():
+    """Test that threads consume work from queue as they finish."""
+    thread_ids = []
+    lock = threading.Lock()
+
+    async def fast_worker(value: int) -> int:
+        with lock:
+            thread_ids.append(threading.get_ident())
+        await asyncio.sleep(0.001)
+        return value
+
+    async def slow_worker(value: int) -> int:
+        with lock:
+            thread_ids.append(threading.get_ident())
+        await asyncio.sleep(0.1)
+        return value
+
+    async with ThreadedTaskGroup(num_threads=2, mode=SchedulingMode.QUEUE) as tg:
+        # One slow task and many fast tasks
+        tg.create_task(slow_worker(0))
+        for i in range(1, 10):
+            tg.create_task(fast_worker(i))
+
+    # Should have used threads (not necessarily all tasks on different threads)
+    assert len(thread_ids) == 10
+
+
+@pytest.mark.asyncio
+async def test_queue_mode_exception_propagation():
+    """Test that exceptions are properly propagated in queue mode."""
+
+    async def failing_worker():
+        await asyncio.sleep(0.01)
+        raise ValueError("Test error")
+
+    async def normal_worker():
+        await asyncio.sleep(0.1)
+        return "success"
+
+    with pytest.raises(ValueError, match="Test error"):
+        async with ThreadedTaskGroup(num_threads=2, mode=SchedulingMode.QUEUE) as tg:
+            tg.create_task(failing_worker())
+            tg.create_task(normal_worker())
+
+
+@pytest.mark.asyncio
+async def test_queue_mode_many_tasks():
+    """Test handling many tasks in queue mode."""
+    results = []
+
+    async def worker(value: int) -> int:
+        await asyncio.sleep(0.001)
+        return value
+
+    async with ThreadedTaskGroup(num_threads=4, mode=SchedulingMode.QUEUE) as tg:
+        futures = [tg.create_task(worker(i)) for i in range(100)]
+
+    results = [await f for f in futures]
+    assert results == list(range(100))
+
+
+@pytest.mark.asyncio
+async def test_queue_mode_concurrent_execution():
+    """Test that tasks run concurrently in queue mode."""
+    start_time = time.time()
+
+    async def sleeper(duration: float) -> float:
+        await asyncio.sleep(duration)
+        return duration
+
+    async with ThreadedTaskGroup(num_threads=3, mode=SchedulingMode.QUEUE) as tg:
+        tg.create_task(sleeper(0.1))
+        tg.create_task(sleeper(0.1))
+        tg.create_task(sleeper(0.1))
+
+    elapsed = time.time() - start_time
+
+    # Should complete in ~0.1s if concurrent, not 0.3s
+    assert elapsed < 0.2, f"Tasks took {elapsed}s, expected < 0.2s (concurrent execution)"
+
+
+@pytest.mark.asyncio
+async def test_queue_mode_uneven_workload():
+    """Test queue mode with uneven workload distribution."""
+    thread_usage = {}
+    lock = threading.Lock()
+
+    async def variable_work(value: int) -> int:
+        tid = threading.get_ident()
+        with lock:
+            thread_usage[tid] = thread_usage.get(tid, 0) + 1
+
+        # Variable sleep times
+        sleep_time = 0.001 if value % 3 == 0 else 0.05
+        await asyncio.sleep(sleep_time)
+        return value
+
+    async with ThreadedTaskGroup(num_threads=3, mode=SchedulingMode.QUEUE) as tg:
+        futures = [tg.create_task(variable_work(i)) for i in range(15)]
+
+    results = [await f for f in futures]
+    assert sorted(results) == list(range(15))
+
+    # In queue mode, threads should pick up work as they finish
+    # So we expect all threads to be used
+    assert len(thread_usage) == 3
