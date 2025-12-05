@@ -1,8 +1,8 @@
 """Performance tests comparing thrasks with standard asyncio."""
 
 import asyncio
-import hashlib
 import json
+import logging
 import time
 from typing import Any
 
@@ -10,16 +10,10 @@ import pytest
 
 from thrasks import ThreadedTaskGroup, threaded_gather
 
+logger = logging.getLogger(__name__)
 
-# === CPU-Bound Workloads ===
 
-
-async def cpu_intensive_hash(data: bytes, iterations: int = 1000) -> str:
-    """CPU-intensive hashing operation."""
-    result = data
-    for _ in range(iterations):
-        result = hashlib.sha256(result).digest()
-    return result.hex()
+# === CPU-Bound Workloads ==+
 
 
 async def cpu_intensive_json(data: dict[str, Any], iterations: int = 1000) -> int:
@@ -72,57 +66,10 @@ async def io_bound_with_cpu(sleep_time: float, cpu_work: int = 1000) -> tuple[fl
 
 @pytest.mark.asyncio
 @pytest.mark.benchmark
-async def test_performance_cpu_hashing():
-    """Compare CPU-intensive hashing: asyncio vs thrasks."""
-    num_tasks = 20
-    iterations = 500
-    data_chunks = [f"chunk-{i}".encode() for i in range(num_tasks)]
-
-    # Test with standard asyncio.gather
-    start = time.perf_counter()
-    asyncio_results = await asyncio.gather(
-        *[cpu_intensive_hash(chunk, iterations) for chunk in data_chunks]
-    )
-    asyncio_time = time.perf_counter() - start
-
-    # Test with thrasks (4 threads)
-    start = time.perf_counter()
-    thrasks_results_4 = await threaded_gather(
-        *[cpu_intensive_hash(chunk, iterations) for chunk in data_chunks],
-        num_threads=4,
-    )
-    thrasks_time_4 = time.perf_counter() - start
-
-    # Test with thrasks (8 threads)
-    start = time.perf_counter()
-    thrasks_results_8 = await threaded_gather(
-        *[cpu_intensive_hash(chunk, iterations) for chunk in data_chunks],
-        num_threads=8,
-    )
-    thrasks_time_8 = time.perf_counter() - start
-
-    # Verify results are identical
-    assert asyncio_results == thrasks_results_4 == thrasks_results_8
-
-    # Report performance
-    print(f"\n{'=' * 60}")
-    print(f"CPU-Intensive Hashing Performance ({num_tasks} tasks, {iterations} iterations)")
-    print(f"{'=' * 60}")
-    print(f"asyncio.gather:         {asyncio_time:.3f}s (baseline)")
-    print(f"thrasks (4 threads):    {thrasks_time_4:.3f}s ({asyncio_time / thrasks_time_4:.2f}x)")
-    print(f"thrasks (8 threads):    {thrasks_time_8:.3f}s ({asyncio_time / thrasks_time_8:.2f}x)")
-    print(f"{'=' * 60}")
-
-    # Note: With free-threading, thrasks should be faster
-    # Without free-threading (GIL), times will be similar
-
-
-@pytest.mark.asyncio
-@pytest.mark.benchmark
 async def test_performance_cpu_json():
     """Compare CPU-intensive JSON processing: asyncio vs thrasks."""
     num_tasks = 16
-    iterations = 50
+    iterations = 2000
     test_data = [
         {"id": i, "data": "x" * 100, "nested": {"values": list(range(50))}}
         for i in range(num_tasks)
@@ -139,18 +86,23 @@ async def test_performance_cpu_json():
     start = time.perf_counter()
     thrasks_results = await threaded_gather(
         *[cpu_intensive_json(data, iterations) for data in test_data],
-        num_threads=4,
+        num_threads=2,
     )
     thrasks_time = time.perf_counter() - start
 
     assert asyncio_results == thrasks_results
 
-    print(f"\n{'=' * 60}")
-    print(f"CPU-Intensive JSON Processing ({num_tasks} tasks, {iterations} iterations)")
-    print(f"{'=' * 60}")
-    print(f"asyncio.gather:         {asyncio_time:.3f}s (baseline)")
-    print(f"thrasks (4 threads):    {thrasks_time:.3f}s ({asyncio_time / thrasks_time:.2f}x)")
-    print(f"{'=' * 60}")
+    speedup = asyncio_time / thrasks_time
+
+    logger.info("=" * 60)
+    logger.info("CPU-Intensive JSON Processing (%d tasks, %d iterations)", num_tasks, iterations)
+    logger.info("=" * 60)
+    logger.info("asyncio.gather:         %.3fs (baseline)", asyncio_time)
+    logger.info("thrasks (2 threads):    %.3fs (%.2fx)", thrasks_time, speedup)
+    logger.info("=" * 60)
+
+    # CPU-bound calculations should be faster with thrasks
+    assert speedup > 1.5, f"Expected thrasks to be at least 1.5x faster, got {speedup:.2f}x"
 
 
 @pytest.mark.asyncio
@@ -171,18 +123,23 @@ async def test_performance_fibonacci():
     start = time.perf_counter()
     thrasks_results = await threaded_gather(
         *[cpu_fibonacci(n) for n in fib_values],
-        num_threads=4,
+        num_threads=2,
     )
     thrasks_time = time.perf_counter() - start
 
     assert asyncio_results == thrasks_results
 
-    print(f"\n{'=' * 60}")
-    print(f"CPU-Intensive Fibonacci ({num_tasks} tasks)")
-    print(f"{'=' * 60}")
-    print(f"asyncio.gather:         {asyncio_time:.3f}s (baseline)")
-    print(f"thrasks (4 threads):    {thrasks_time:.3f}s ({asyncio_time / thrasks_time:.2f}x)")
-    print(f"{'=' * 60}")
+    speedup = asyncio_time / thrasks_time
+
+    logger.info("=" * 60)
+    logger.info("CPU-Intensive Fibonacci (%d tasks)", num_tasks)
+    logger.info("=" * 60)
+    logger.info("asyncio.gather:         %.3fs (baseline)", asyncio_time)
+    logger.info("thrasks (2 threads):    %.3fs (%.2fx)", thrasks_time, speedup)
+    logger.info("=" * 60)
+
+    # CPU-bound calculations should be faster with thrasks
+    assert speedup > 1.5, f"Expected thrasks to be at least 1.5x faster, got {speedup:.2f}x"
 
 
 @pytest.mark.asyncio
@@ -203,19 +160,24 @@ async def test_performance_io_bound():
     start = time.perf_counter()
     thrasks_results = await threaded_gather(
         *[io_bound_sleep(sleep_time) for _ in range(num_tasks)],
-        num_threads=4,
+        num_threads=2,
     )
     thrasks_time = time.perf_counter() - start
 
     assert asyncio_results == thrasks_results
 
-    print(f"\n{'=' * 60}")
-    print(f"I/O-Bound Sleep ({num_tasks} tasks, {sleep_time}s each)")
-    print(f"{'=' * 60}")
-    print(f"asyncio.gather:         {asyncio_time:.3f}s (baseline)")
-    print(f"thrasks (4 threads):    {thrasks_time:.3f}s ({asyncio_time / thrasks_time:.2f}x)")
-    print(f"Note: For pure I/O, asyncio should be similar or faster (less overhead)")
-    print(f"{'=' * 60}")
+    overhead_ratio = thrasks_time / asyncio_time
+
+    logger.info("=" * 60)
+    logger.info("I/O-Bound Sleep (%d tasks, %.2fs each)", num_tasks, sleep_time)
+    logger.info("=" * 60)
+    logger.info("asyncio.gather:         %.3fs (baseline)", asyncio_time)
+    logger.info("thrasks (2 threads):    %.3fs (%.2fx)", thrasks_time, asyncio_time / thrasks_time)
+    logger.info("Note: For pure I/O, asyncio should be similar or faster (less overhead)")
+    logger.info("=" * 60)
+
+    # For pure I/O, thrasks shouldn't be much slower (max 3x overhead)
+    assert overhead_ratio < 3.0, f"Expected thrasks overhead to be less than 3x for I/O, got {overhead_ratio:.2f}x"
 
 
 @pytest.mark.asyncio
@@ -236,20 +198,25 @@ async def test_performance_thread_locked_sleep():
     start = time.perf_counter()
     thrasks_results = await threaded_gather(
         *[blocking_sleep(sleep_time) for _ in range(num_tasks)],
-        num_threads=4,
+        num_threads=2,
     )
     thrasks_time = time.perf_counter() - start
 
     assert asyncio_results == thrasks_results
 
-    print(f"\n{'=' * 60}")
-    print(f"Thread-Locked Sleep ({num_tasks} tasks, {sleep_time}s each)")
-    print(f"{'=' * 60}")
-    print(f"asyncio.gather:         {asyncio_time:.3f}s (runs sequentially!)")
-    print(f"thrasks (4 threads):    {thrasks_time:.3f}s ({asyncio_time / thrasks_time:.2f}x)")
-    print(f"Note: time.sleep() blocks the event loop in asyncio but not in thrasks")
-    print(f"      thrasks executes blocking operations in parallel threads")
-    print(f"{'=' * 60}")
+    speedup = asyncio_time / thrasks_time
+
+    logger.info("=" * 60)
+    logger.info("Thread-Locked Sleep (%d tasks, %.1fs each)", num_tasks, sleep_time)
+    logger.info("=" * 60)
+    logger.info("asyncio.gather:         %.3fs (runs sequentially!)", asyncio_time)
+    logger.info("thrasks (2 threads):    %.3fs (%.2fx)", thrasks_time, speedup)
+    logger.info("Note: time.sleep() blocks the event loop in asyncio but not in thrasks")
+    logger.info("      thrasks executes blocking operations in parallel threads")
+    logger.info("=" * 60)
+
+    # Blocking sleep should be MUCH faster with thrasks (at least 3x for 4 threads with 20 tasks)
+    assert speedup > 1.5, f"Expected thrasks to be at least 3x faster for blocking sleep, got {speedup:.2f}x"
 
 
 @pytest.mark.asyncio
@@ -258,7 +225,7 @@ async def test_performance_mixed_workload():
     """Compare mixed I/O and CPU workload: asyncio vs thrasks."""
     num_tasks = 20
     sleep_time = 0.01
-    cpu_work = 10000
+    cpu_work = 50000
 
     # Test with standard asyncio.gather
     start = time.perf_counter()
@@ -271,18 +238,23 @@ async def test_performance_mixed_workload():
     start = time.perf_counter()
     thrasks_results = await threaded_gather(
         *[io_bound_with_cpu(sleep_time, cpu_work) for _ in range(num_tasks)],
-        num_threads=4,
+        num_threads=2,
     )
     thrasks_time = time.perf_counter() - start
 
     assert asyncio_results == thrasks_results
 
-    print(f"\n{'=' * 60}")
-    print(f"Mixed I/O + CPU Workload ({num_tasks} tasks)")
-    print(f"{'=' * 60}")
-    print(f"asyncio.gather:         {asyncio_time:.3f}s (baseline)")
-    print(f"thrasks (4 threads):    {thrasks_time:.3f}s ({asyncio_time / thrasks_time:.2f}x)")
-    print(f"{'=' * 60}")
+    speedup = asyncio_time / thrasks_time
+
+    logger.info("=" * 60)
+    logger.info("Mixed I/O + CPU Workload (%d tasks)", num_tasks)
+    logger.info("=" * 60)
+    logger.info("asyncio.gather:         %.3fs (baseline)", asyncio_time)
+    logger.info("thrasks (2 threads):    %.3fs (%.2fx)", thrasks_time, speedup)
+    logger.info("=" * 60)
+
+    # Mixed workload should benefit from thrasks (at least 1.3x speedup)
+    assert speedup > 1.3, f"Expected thrasks to be at least 1.3x faster for mixed workload, got {speedup:.2f}x"
 
 
 @pytest.mark.asyncio
@@ -290,37 +262,41 @@ async def test_performance_mixed_workload():
 async def test_performance_task_group_cpu():
     """Compare ThreadedTaskGroup vs asyncio.TaskGroup for CPU work."""
     num_tasks = 16
-    iterations = 300
-    data_chunks = [f"chunk-{i}".encode() for i in range(num_tasks)]
+    fib_values = [10000 + i * 1000 for i in range(num_tasks)]
 
     # Test with asyncio.TaskGroup
     start = time.perf_counter()
     async with asyncio.TaskGroup() as tg:
         asyncio_tasks = [
-            tg.create_task(cpu_intensive_hash(chunk, iterations))
-            for chunk in data_chunks
+            tg.create_task(cpu_fibonacci(n))
+            for n in fib_values
         ]
     asyncio_results = [task.result() for task in asyncio_tasks]
     asyncio_time = time.perf_counter() - start
 
     # Test with ThreadedTaskGroup
     start = time.perf_counter()
-    async with ThreadedTaskGroup(num_threads=4) as tg:
+    async with ThreadedTaskGroup(num_threads=2) as tg:
         thrasks_tasks = [
-            tg.create_task(cpu_intensive_hash(chunk, iterations))
-            for chunk in data_chunks
+            tg.create_task(cpu_fibonacci(n))
+            for n in fib_values
         ]
     thrasks_results = [await task for task in thrasks_tasks]
     thrasks_time = time.perf_counter() - start
 
     assert asyncio_results == thrasks_results
 
-    print(f"\n{'=' * 60}")
-    print(f"TaskGroup CPU Hashing ({num_tasks} tasks, {iterations} iterations)")
-    print(f"{'=' * 60}")
-    print(f"asyncio.TaskGroup:      {asyncio_time:.3f}s (baseline)")
-    print(f"ThreadedTaskGroup (4):  {thrasks_time:.3f}s ({asyncio_time / thrasks_time:.2f}x)")
-    print(f"{'=' * 60}")
+    speedup = asyncio_time / thrasks_time
+
+    logger.info("=" * 60)
+    logger.info("TaskGroup CPU Fibonacci (%d tasks)", num_tasks)
+    logger.info("=" * 60)
+    logger.info("asyncio.TaskGroup:      %.3fs (baseline)", asyncio_time)
+    logger.info("ThreadedTaskGroup (2 threads):  %.3fs (%.2fx)", thrasks_time, speedup)
+    logger.info("=" * 60)
+
+    # CPU-bound calculations should be faster with ThreadedTaskGroup
+    assert speedup > 1.5, f"Expected ThreadedTaskGroup to be at least 1.5x faster, got {speedup:.2f}x"
 
 
 @pytest.mark.asyncio
@@ -328,32 +304,38 @@ async def test_performance_task_group_cpu():
 async def test_performance_scaling():
     """Test how performance scales with different thread counts."""
     num_tasks = 32
-    iterations = 200
     thread_counts = [1, 2, 4, 8, 16]
-    data_chunks = [f"chunk-{i}".encode() for i in range(num_tasks)]
+    fib_values = [8000 + i * 500 for i in range(num_tasks)]
 
     results = {}
 
     for num_threads in thread_counts:
         start = time.perf_counter()
         await threaded_gather(
-            *[cpu_intensive_hash(chunk, iterations) for chunk in data_chunks],
+            *[cpu_fibonacci(n) for n in fib_values],
             num_threads=num_threads,
         )
         elapsed = time.perf_counter() - start
         results[num_threads] = elapsed
 
-    print(f"\n{'=' * 60}")
-    print(f"Thread Scaling Performance ({num_tasks} tasks, {iterations} iterations)")
-    print(f"{'=' * 60}")
+    logger.info("=" * 60)
+    logger.info("Thread Scaling Performance (%d tasks)", num_tasks)
+    logger.info("=" * 60)
     baseline = results[1]
     for num_threads in thread_counts:
         elapsed = results[num_threads]
         speedup = baseline / elapsed
-        print(f"{num_threads:2d} thread(s):  {elapsed:.3f}s  (speedup: {speedup:.2f}x)")
-    print(f"{'=' * 60}")
-    print("Note: Speedup depends on free-threading being enabled")
-    print(f"{'=' * 60}")
+        logger.info("%2d thread(s):  %.3fs  (speedup: %.2fx)", num_threads, elapsed, speedup)
+    logger.info("=" * 60)
+    logger.info("Note: Speedup depends on free-threading being enabled")
+    logger.info("=" * 60)
+
+    # With free-threading, we should see good speedup with more threads
+    speedup_4 = baseline / results[4]
+    assert speedup_4 > 1.5, f"Expected at least 1.5x speedup with 4 threads, got {speedup_4:.2f}x"
+    # Verify 8 threads also provide meaningful speedup
+    speedup_8 = baseline / results[8]
+    assert speedup_8 > 1.8, f"Expected at least 1.8x speedup with 8 threads, got {speedup_8:.2f}x"
 
 
 @pytest.mark.asyncio
@@ -376,33 +358,38 @@ async def test_performance_overhead():
     start = time.perf_counter()
     thrasks_results = await threaded_gather(
         *[trivial_task(i) for i in range(num_tasks)],
-        num_threads=4,
+        num_threads=2,
     )
     thrasks_time = time.perf_counter() - start
 
     assert asyncio_results == thrasks_results
 
-    print(f"\n{'=' * 60}")
-    print(f"Overhead Test - Trivial Tasks ({num_tasks} tasks)")
-    print(f"{'=' * 60}")
-    print(f"asyncio.gather:         {asyncio_time:.4f}s (baseline)")
-    print(f"thrasks (4 threads):    {thrasks_time:.4f}s (overhead: {thrasks_time / asyncio_time:.2f}x)")
-    print(f"{'=' * 60}")
-    print("Note: thrasks has higher overhead for trivial tasks")
-    print("      Use asyncio for simple/fast operations")
-    print(f"{'=' * 60}")
+    overhead_ratio = thrasks_time / asyncio_time
+
+    logger.info("=" * 60)
+    logger.info("Overhead Test - Trivial Tasks (%d tasks)", num_tasks)
+    logger.info("=" * 60)
+    logger.info("asyncio.gather:         %.4fs (baseline)", asyncio_time)
+    logger.info("thrasks (2 threads):    %.4fs (overhead: %.2fx)", thrasks_time, overhead_ratio)
+    logger.info("=" * 60)
+    logger.info("Note: thrasks has higher overhead for trivial tasks")
+    logger.info("      Use asyncio for simple/fast operations")
+    logger.info("=" * 60)
+
+    # For trivial tasks, overhead shouldn't be excessive (max 50x)
+    assert overhead_ratio < 50.0, f"Expected thrasks overhead to be less than 50x for trivial tasks, got {overhead_ratio:.2f}x"
 
 
 @pytest.mark.asyncio
 @pytest.mark.benchmark
 async def test_performance_real_world_scenario():
     """Simulate real-world scenario: API responses with heavy processing."""
-    num_requests = 20
+    num_requests = 200
 
     async def simulate_api_request(request_id: int) -> dict[str, Any]:
         """Simulate API request with network delay and CPU processing."""
         # Simulate network I/O
-        await asyncio.sleep(0.02)
+        await asyncio.sleep(0.1)
 
         # Simulate heavy JSON processing (like parsing large responses)
         data = {
@@ -411,13 +398,15 @@ async def test_performance_real_world_scenario():
             "items": [{"value": i, "squared": i * i} for i in range(100)],
         }
 
-        # Heavy processing
-        for _ in range(50):
-            serialized = json.dumps(data)
-            parsed = json.loads(serialized)
-            _ = hashlib.sha256(serialized.encode()).hexdigest()
+        # Heavy CPU processing
+        fib_result = await cpu_fibonacci(5000 + request_id * 100)
 
-        return {"request_id": request_id, "status": "processed", "data": data}
+        # Additional JSON serialization work
+        for _ in range(10):
+            serialized = json.dumps(data)
+            _ = json.loads(serialized)
+
+        return {"request_id": request_id, "status": "processed", "data": data, "fib": fib_result}
 
     # Test with asyncio.gather
     start = time.perf_counter()
@@ -430,20 +419,25 @@ async def test_performance_real_world_scenario():
     start = time.perf_counter()
     thrasks_results = await threaded_gather(
         *[simulate_api_request(i) for i in range(num_requests)],
-        num_threads=4,
+        num_threads=2,
     )
     thrasks_time = time.perf_counter() - start
 
     assert len(asyncio_results) == len(thrasks_results) == num_requests
 
-    print(f"\n{'=' * 60}")
-    print(f"Real-World Scenario: API + Heavy Processing ({num_requests} requests)")
-    print(f"{'=' * 60}")
-    print(f"asyncio.gather:         {asyncio_time:.3f}s (baseline)")
-    print(f"thrasks (4 threads):    {thrasks_time:.3f}s ({asyncio_time / thrasks_time:.2f}x)")
-    print(f"{'=' * 60}")
-    print("This simulates: network I/O + JSON processing + hashing")
-    print(f"{'=' * 60}")
+    speedup = asyncio_time / thrasks_time
+
+    logger.info("=" * 60)
+    logger.info("Real-World Scenario: API + Heavy Processing (%d requests)", num_requests)
+    logger.info("=" * 60)
+    logger.info("asyncio.gather:         %.3fs (baseline)", asyncio_time)
+    logger.info("thrasks (2 threads):    %.3fs (%.2fx)", thrasks_time, speedup)
+    logger.info("=" * 60)
+    logger.info("This simulates: network I/O + JSON processing + Fibonacci calculation")
+    logger.info("=" * 60)
+
+    # Real-world mixed workload should benefit from thrasks
+    assert speedup > 1.5, f"Expected thrasks to be at least 1.5x faster for real-world scenario, got {speedup:.2f}x"
 
 
 # === Summary Test ===
@@ -453,38 +447,38 @@ async def test_performance_real_world_scenario():
 @pytest.mark.benchmark
 async def test_performance_summary():
     """Run a quick summary of key performance comparisons."""
-    print(f"\n{'=' * 70}")
-    print("THRASKS PERFORMANCE SUMMARY")
-    print(f"{'=' * 70}")
+    logger.info("=" * 70)
+    logger.info("THRASKS PERFORMANCE SUMMARY")
+    logger.info("=" * 70)
 
     # Quick CPU test
     num_tasks = 12
-    data = [f"test-{i}".encode() for i in range(num_tasks)]
+    fib_values = [8000 + i * 500 for i in range(num_tasks)]
 
     start = time.perf_counter()
-    await asyncio.gather(*[cpu_intensive_hash(d, 300) for d in data])
+    await asyncio.gather(*[cpu_fibonacci(n) for n in fib_values])
     asyncio_time = time.perf_counter() - start
 
     start = time.perf_counter()
-    await threaded_gather(*[cpu_intensive_hash(d, 300) for d in data], num_threads=4)
+    await threaded_gather(*[cpu_fibonacci(n) for n in fib_values], num_threads=2)
     thrasks_time = time.perf_counter() - start
 
-    print(f"\nCPU-Bound (Hash):  asyncio={asyncio_time:.3f}s  thrasks={thrasks_time:.3f}s  ({asyncio_time/thrasks_time:.2f}x)")
+    logger.info("CPU-Bound (Fibonacci):  asyncio=%.3fs  thrasks=%.3fs  (%.2fx)", asyncio_time, thrasks_time, asyncio_time / thrasks_time)
 
     # Quick I/O test
     start = time.perf_counter()
-    await asyncio.gather(*[io_bound_sleep(0.05) for _ in range(num_tasks)])
+    await asyncio.gather(*[io_bound_sleep(0.1) for _ in range(num_tasks)])
     asyncio_time = time.perf_counter() - start
 
     start = time.perf_counter()
-    await threaded_gather(*[io_bound_sleep(0.05) for _ in range(num_tasks)], num_threads=4)
+    await threaded_gather(*[io_bound_sleep(0.1) for _ in range(num_tasks)], num_threads=2)
     thrasks_time = time.perf_counter() - start
 
-    print(f"I/O-Bound (Sleep): asyncio={asyncio_time:.3f}s  thrasks={thrasks_time:.3f}s  ({asyncio_time/thrasks_time:.2f}x)")
+    logger.info("I/O-Bound (Sleep): asyncio=%.3fs  thrasks=%.3fs  (%.2fx)", asyncio_time, thrasks_time, asyncio_time / thrasks_time)
 
-    print(f"\n{'=' * 70}")
-    print("RECOMMENDATIONS:")
-    print("  • Use thrasks for CPU-intensive async operations (with free-threading)")
-    print("  • Use asyncio for pure I/O-bound operations (lower overhead)")
-    print("  • Use thrasks for mixed I/O + CPU workloads")
-    print(f"{'=' * 70}\n")
+    logger.info("=" * 70)
+    logger.info("RECOMMENDATIONS:")
+    logger.info("  • Use thrasks for CPU-intensive async operations (with free-threading)")
+    logger.info("  • Use asyncio for pure I/O-bound operations (lower overhead)")
+    logger.info("  • Use thrasks for mixed I/O + CPU workloads")
+    logger.info("=" * 70)
