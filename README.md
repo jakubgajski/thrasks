@@ -2,7 +2,7 @@
 
 **Threaded async tasks for free-threaded Python 3.14**
 
-`thrasks` is a Python library that brings Kotlin-style coroutine threading to Python's asyncio. It allows you to distribute async tasks across multiple threads, each with its own event loop, enabling true parallel execution of coroutines in free-threaded Python 3.14+.
+`thrasks` is a Python library that allows you to distribute async tasks across multiple threads, each with its own event loop, enabling true parallel execution of coroutines in free-threaded Python 3.14+.
 
 ## Features
 
@@ -26,6 +26,132 @@ uv add thrasks
 ## Requirements
 
 - Python 3.14+freethreading or later
+
+## Does it work?
+
+Below you can find the output of performance benchmarks (run on Linux):
+
+```
+uv run pytest tests --log-cli-level=INFO -k "benchmark"
+==== test session starts ====
+platform linux -- Python 3.14.0rc2, pytest-8.4.2, pluggy-1.6.0
+rootdir: /x/y/z/thrasks
+configfile: pytest.ini
+plugins: asyncio-1.2.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collected 39 items / 29 deselected / 10 selected                                                                                                                                                 
+
+tests/test_performance.py::test_performance_cpu_json 
+---- live log call -----
+INFO     tests.test_performance:test_performance.py:97 ====
+INFO     tests.test_performance:test_performance.py:98 CPU-Intensive JSON Processing (16 tasks, 2000 iterations)
+INFO     tests.test_performance:test_performance.py:99 ====
+INFO     tests.test_performance:test_performance.py:100 asyncio.gather:         0.162s (baseline)
+INFO     tests.test_performance:test_performance.py:101 thrasks (2 threads):    0.088s (1.84x)
+INFO     tests.test_performance:test_performance.py:102 ====
+PASSED                                                                                                                                                                                     [ 10%]
+tests/test_performance.py::test_performance_fibonacci 
+---- live log call -----
+INFO     tests.test_performance:test_performance.py:134 ====
+INFO     tests.test_performance:test_performance.py:135 CPU-Intensive Fibonacci (16 tasks)
+INFO     tests.test_performance:test_performance.py:136 ====
+INFO     tests.test_performance:test_performance.py:137 asyncio.gather:         0.044s (baseline)
+INFO     tests.test_performance:test_performance.py:138 thrasks (2 threads):    0.026s (1.71x)
+INFO     tests.test_performance:test_performance.py:139 ====
+PASSED                                                                                                                                                                                     [ 20%]
+tests/test_performance.py::test_performance_io_bound 
+---- live log call -----
+INFO     tests.test_performance:test_performance.py:171 ====
+INFO     tests.test_performance:test_performance.py:172 I/O-Bound Sleep (20 tasks, 0.05s each)
+INFO     tests.test_performance:test_performance.py:173 ====
+INFO     tests.test_performance:test_performance.py:174 asyncio.gather:         0.050s (baseline)
+INFO     tests.test_performance:test_performance.py:175 thrasks (2 threads):    0.052s (0.96x)
+INFO     tests.test_performance:test_performance.py:176 Note: For pure I/O, asyncio should be similar or faster (less overhead)
+INFO     tests.test_performance:test_performance.py:177 ====
+PASSED                                                                                                                                                                                     [ 30%]
+tests/test_performance.py::test_performance_thread_locked_sleep 
+---- live log call -----
+INFO     tests.test_performance:test_performance.py:209 ====
+INFO     tests.test_performance:test_performance.py:210 Thread-Locked Sleep (20 tasks, 0.1s each)
+INFO     tests.test_performance:test_performance.py:211 ====
+INFO     tests.test_performance:test_performance.py:212 asyncio.gather:         2.003s (runs sequentially!)
+INFO     tests.test_performance:test_performance.py:213 thrasks (2 threads):    1.004s (1.99x)
+INFO     tests.test_performance:test_performance.py:214 Note: time.sleep() blocks the event loop in asyncio but not in thrasks
+INFO     tests.test_performance:test_performance.py:215       thrasks executes blocking operations in parallel threads
+INFO     tests.test_performance:test_performance.py:216 ====
+PASSED                                                                                                                                                                                     [ 40%]
+tests/test_performance.py::test_performance_mixed_workload 
+---- live log call -----
+INFO     tests.test_performance:test_performance.py:249 ====
+INFO     tests.test_performance:test_performance.py:250 Mixed I/O + CPU Workload (20 tasks)
+INFO     tests.test_performance:test_performance.py:251 ====
+INFO     tests.test_performance:test_performance.py:252 asyncio.gather:         0.044s (baseline)
+INFO     tests.test_performance:test_performance.py:253 thrasks (2 threads):    0.030s (1.49x)
+INFO     tests.test_performance:test_performance.py:254 ====
+PASSED                                                                                                                                                                                     [ 50%]
+tests/test_performance.py::test_performance_task_group_cpu 
+---- live log call -----
+INFO     tests.test_performance:test_performance.py:291 ====
+INFO     tests.test_performance:test_performance.py:292 TaskGroup CPU Fibonacci (16 tasks)
+INFO     tests.test_performance:test_performance.py:293 ====
+INFO     tests.test_performance:test_performance.py:294 asyncio.TaskGroup:      0.044s (baseline)
+INFO     tests.test_performance:test_performance.py:295 ThreadedTaskGroup (2 threads):  0.025s (1.78x)
+INFO     tests.test_performance:test_performance.py:296 ====
+PASSED                                                                                                                                                                                     [ 60%]
+tests/test_performance.py::test_performance_scaling 
+---- live log call -----
+INFO     tests.test_performance:test_performance.py:321 ====
+INFO     tests.test_performance:test_performance.py:322 Thread Scaling Performance (32 tasks)
+INFO     tests.test_performance:test_performance.py:323 ====
+INFO     tests.test_performance:test_performance.py:328  1 thread(s):  0.075s  (speedup: 1.00x)
+INFO     tests.test_performance:test_performance.py:328  2 thread(s):  0.039s  (speedup: 1.90x)
+INFO     tests.test_performance:test_performance.py:328  4 thread(s):  0.024s  (speedup: 3.07x)
+INFO     tests.test_performance:test_performance.py:328  8 thread(s):  0.020s  (speedup: 3.78x)
+INFO     tests.test_performance:test_performance.py:328 16 thread(s):  0.022s  (speedup: 3.40x)
+INFO     tests.test_performance:test_performance.py:329 ====
+INFO     tests.test_performance:test_performance.py:330 Note: Speedup depends on free-threading being enabled
+INFO     tests.test_performance:test_performance.py:331 ====
+PASSED                                                                                                                                                                                     [ 70%]
+tests/test_performance.py::test_performance_overhead 
+---- live log call -----
+INFO     tests.test_performance:test_performance.py:369 ====
+INFO     tests.test_performance:test_performance.py:370 Overhead Test - Trivial Tasks (100 tasks)
+INFO     tests.test_performance:test_performance.py:371 ====
+INFO     tests.test_performance:test_performance.py:372 asyncio.gather:         0.0002s (baseline)
+INFO     tests.test_performance:test_performance.py:373 thrasks (2 threads):    0.0021s (overhead: 9.27x)
+INFO     tests.test_performance:test_performance.py:374 ====
+INFO     tests.test_performance:test_performance.py:375 Note: thrasks has higher overhead for trivial tasks
+INFO     tests.test_performance:test_performance.py:376       Use asyncio for simple/fast operations
+INFO     tests.test_performance:test_performance.py:377 ====
+PASSED                                                                                                                                                                                     [ 80%]
+tests/test_performance.py::test_performance_real_world_scenario 
+---- live log call -----
+INFO     tests.test_performance:test_performance.py:430 ====
+INFO     tests.test_performance:test_performance.py:431 Real-World Scenario: API + Heavy Processing (200 requests)
+INFO     tests.test_performance:test_performance.py:432 ====
+INFO     tests.test_performance:test_performance.py:433 asyncio.gather:         0.615s (baseline)
+INFO     tests.test_performance:test_performance.py:434 thrasks (2 threads):    0.339s (1.81x)
+INFO     tests.test_performance:test_performance.py:435 ====
+INFO     tests.test_performance:test_performance.py:436 This simulates: network I/O + JSON processing + Fibonacci calculation
+INFO     tests.test_performance:test_performance.py:437 ====
+PASSED                                                                                                                                                                                     [ 90%]
+tests/test_performance.py::test_performance_summary 
+---- live log call -----
+INFO     tests.test_performance:test_performance.py:450 ====
+INFO     tests.test_performance:test_performance.py:451 THRASKS PERFORMANCE SUMMARY
+INFO     tests.test_performance:test_performance.py:452 ====
+INFO     tests.test_performance:test_performance.py:466 CPU-Bound (Fibonacci):  asyncio=0.011s  thrasks=0.008s  (1.35x)
+INFO     tests.test_performance:test_performance.py:477 I/O-Bound (Sleep): asyncio=0.101s  thrasks=0.104s  (0.97x)
+INFO     tests.test_performance:test_performance.py:479 ====
+INFO     tests.test_performance:test_performance.py:480 RECOMMENDATIONS:
+INFO     tests.test_performance:test_performance.py:481   • Use thrasks for CPU-intensive async operations (with free-threading)
+INFO     tests.test_performance:test_performance.py:482   • Use asyncio for pure I/O-bound operations (lower overhead)
+INFO     tests.test_performance:test_performance.py:483   • Use thrasks for mixed I/O + CPU workloads
+INFO     tests.test_performance:test_performance.py:484 ====
+PASSED                                                                                                                                                                                     [100%]
+
+==== 10 passed, 29 deselected in 4.96s ====
+```
 
 ## Quick Start
 
@@ -207,29 +333,33 @@ Perfect for CPU-intensive operations within async code:
 
 ```python
 import asyncio
-import hashlib
+import json
 from thrasks import threaded_gather
 
 
-async def hash_data(data: bytes) -> str:
-    """CPU-intensive hashing."""
-    # With free-threading, this can run in parallel
-    for _ in range(10000):
-        data = hashlib.sha256(data).digest()
-    await asyncio.sleep(0.1)
-    return data.hex()
+async def process_json(data: dict, iterations: int = 1000) -> int:
+    """CPU-intensive JSON serialization/deserialization."""
+    result = 0
+    for _ in range(iterations):
+        serialized = json.dumps(data)
+        _ = json.loads(serialized)
+        result += len(serialized)
+    return result
 
 
 async def main():
-    data_chunks = [b"chunk1", b"chunk2", b"chunk3", b"chunk4"]
+    data_chunks = [
+        {"id": i, "data": "x" * 100, "nested": {"values": list(range(50))}}
+        for i in range(4)
+    ]
 
-    # Hash all chunks in parallel across threads
-    hashes = await threaded_gather(
-        *[hash_data(chunk) for chunk in data_chunks],
+    # Process all chunks in parallel across threads
+    results = await threaded_gather(
+        *[process_json(chunk) for chunk in data_chunks],
         num_threads=4,
     )
 
-    print(f"Computed {len(hashes)} hashes")
+    print(f"Processed {len(results)} chunks")
 
 
 asyncio.run(main())
@@ -243,25 +373,43 @@ import json
 from thrasks import ThreadedTaskGroup
 
 
-async def fetch_and_process(url: str) -> dict:
-    """Fetch data and do heavy JSON processing."""
+async def fibonacci(n: int) -> int:
+    """CPU-intensive calculation."""
+    if n <= 1:
+        return n
+    a, b = 0, 1
+    for _ in range(2, n + 1):
+        a, b = b, a + b
+    return b
+
+
+async def fetch_and_process(request_id: int) -> dict:
+    """Fetch data and do heavy processing."""
     # Simulate network fetch
     await asyncio.sleep(0.1)
-    data = {"large": "json" * 10000}
 
-    # Heavy processing (benefits from threading)
-    processed = json.dumps(json.loads(json.dumps(data)))
-    return {"url": url, "size": len(processed)}
+    # Heavy CPU work (benefits from threading)
+    data = {
+        "id": request_id,
+        "payload": "x" * 1000,
+        "items": [{"value": i, "squared": i * i} for i in range(100)],
+    }
+    fib_result = await fibonacci(5000)
+
+    # Additional JSON processing
+    for _ in range(10):
+        serialized = json.dumps(data)
+        _ = json.loads(serialized)
+
+    return {"request_id": request_id, "status": "processed", "fib": fib_result}
 
 
 async def main():
-    urls = [f"https://api.example.com/data/{i}" for i in range(20)]
-
-    async with ThreadedTaskGroup(num_threads=5) as tg:
-        futures = [tg.create_task(fetch_and_process(url)) for url in urls]
+    async with ThreadedTaskGroup(num_threads=4) as tg:
+        futures = [tg.create_task(fetch_and_process(i)) for i in range(20)]
 
     results = [await f for f in futures]
-    print(f"Processed {len(results)} URLs")
+    print(f"Processed {len(results)} requests")
 
 
 asyncio.run(main())
@@ -406,13 +554,14 @@ async with ThreadedTaskGroup(num_threads=num_threads) as tg:
 ### When to Use thrasks
 
 **Good use cases:**
-- CPU-intensive operations in async context (hashing, compression, parsing)
-- Mixed I/O and CPU workloads
+- CPU-intensive operations in async context (JSON processing, Fibonacci calculations, heavy computation)
+- Mixed I/O and CPU workloads (API requests with heavy processing)
+- Blocking operations that lock threads (e.g., `time.sleep()` instead of `asyncio.sleep()`)
 - When you need TaskGroup-like API across threads
 - Free-threaded Python 3.14+ environments
 
 **Not recommended:**
-- Pure I/O-bound tasks (use regular asyncio)
+- Pure I/O-bound tasks with `asyncio.sleep()` (use regular asyncio for lower overhead)
 - Simple, fast coroutines (overhead not worth it)
 - Environments without free-threading support
 
@@ -458,11 +607,12 @@ pytest tests/test_performance.py::test_performance_summary -v -s
 
 The library includes comprehensive performance tests comparing thrasks with standard asyncio:
 
-- **CPU-intensive workloads**: Hashing, JSON processing, calculations
-- **I/O-bound workloads**: Sleep operations, network simulation
+- **CPU-intensive workloads**: JSON processing, Fibonacci calculations
+- **I/O-bound workloads**: asyncio.sleep operations
+- **Blocking workloads**: time.sleep (thread-locking operations)
 - **Mixed workloads**: Combined I/O and CPU operations
 - **Scaling tests**: Performance across different thread counts
-- **Real-world scenarios**: API request processing with heavy computation
+- **Real-world scenarios**: API request processing with heavy computation (network I/O + JSON + Fibonacci)
 
 Run all benchmarks:
 
