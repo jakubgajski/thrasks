@@ -27,6 +27,21 @@ class _ThreadEventLoop:
         self.thread.start()
         self._ready_event.wait()  # Wait until loop is ready
 
+    def _cleanup_tasks(self) -> None:
+        """Cancel all tasks and close the loop."""
+        if not self.loop:
+            return
+
+        tasks = asyncio.all_tasks(self.loop)
+        for task in tasks:
+            task.cancel()
+
+        # Run loop once more to process cancellations
+        if tasks:
+            self.loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
+
+        self.loop.close()
+
     def _run_loop(self) -> None:
         """Run the event loop (executed in thread)."""
         self.loop = asyncio.new_event_loop()
@@ -37,16 +52,7 @@ class _ThreadEventLoop:
         try:
             self.loop.run_forever()
         finally:
-            # Clean up all tasks
-            try:
-                tasks = asyncio.all_tasks(self.loop)
-                for task in tasks:
-                    task.cancel()
-                # Run loop once more to process cancellations
-                if tasks:
-                    self.loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
-            finally:
-                self.loop.close()
+            self._cleanup_tasks()
 
     def stop(self) -> None:
         """Stop the event loop and join the thread."""
@@ -55,17 +61,116 @@ class _ThreadEventLoop:
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=5.0)
 
+    def _cancel_tasks_internal(self) -> None:
+        """Internal method to cancel tasks (runs in event loop thread)."""
+        for task in self._tasks:
+            if not task.done():
+                task.cancel()
+
     def cancel_all_tasks(self) -> None:
         """Cancel all tasks running in this thread's event loop."""
         if not self.loop:
             return
 
-        def _cancel() -> None:
-            for task in self._tasks:
-                if not task.done():
-                    task.cancel()
+        self.loop.call_soon_threadsafe(self._cancel_tasks_internal)
 
-        self.loop.call_soon_threadsafe(_cancel)
+    def _set_future_cancelled(
+        self, future: asyncio.Future[Any], caller_loop: asyncio.AbstractEventLoop | None
+    ) -> None:
+        """Set future as cancelled, handling thread-safety."""
+        if future.done():
+            return
+
+        if caller_loop:
+            caller_loop.call_soon_threadsafe(future.cancel)
+        else:
+            future.cancel()
+
+    def _set_exception_threadsafe(
+        self, future: asyncio.Future[Any], exc: BaseException
+    ) -> None:
+        """Set exception if future not done (runs in caller's thread)."""
+        if not future.done():
+            future.set_exception(exc)
+
+    def _set_future_exception(
+        self,
+        future: asyncio.Future[Any],
+        exc: BaseException,
+        caller_loop: asyncio.AbstractEventLoop | None,
+    ) -> None:
+        """Set future exception, handling thread-safety."""
+        if future.done():
+            return
+
+        if caller_loop:
+            caller_loop.call_soon_threadsafe(
+                self._set_exception_threadsafe, future, exc
+            )
+        else:
+            future.set_exception(exc)
+
+    def _set_result_threadsafe(
+        self, future: asyncio.Future[T], result: T
+    ) -> None:
+        """Set result if future not done (runs in caller's thread)."""
+        if not future.done():
+            future.set_result(result)
+
+    def _set_future_result(
+        self,
+        future: asyncio.Future[T],
+        result: T,
+        caller_loop: asyncio.AbstractEventLoop | None,
+    ) -> None:
+        """Set future result, handling thread-safety."""
+        if future.done():
+            return
+
+        if caller_loop:
+            caller_loop.call_soon_threadsafe(
+                self._set_result_threadsafe, future, result
+            )
+        else:
+            future.set_result(result)
+
+    def _handle_task_completion(
+        self,
+        task: asyncio.Task[T],
+        future: asyncio.Future[T],
+        caller_loop: asyncio.AbstractEventLoop | None,
+    ) -> None:
+        """Handle task completion by setting the future's result."""
+        try:
+            if task.cancelled():
+                self._set_future_cancelled(future, caller_loop)
+                return
+
+            if task.exception() is not None:
+                self._set_future_exception(future, task.exception(), caller_loop)
+                return
+
+            self._set_future_result(future, task.result(), caller_loop)
+        except Exception:
+            pass  # Future might already be done or other error
+
+    def _schedule_task(
+        self,
+        coro: Coroutine[Any, Any, T],
+        future: asyncio.Future[T],
+        caller_loop: asyncio.AbstractEventLoop | None,
+        name: str | None,
+        context: Context | None,
+    ) -> None:
+        """Create and schedule task in this thread's event loop."""
+        try:
+            task = self.loop.create_task(coro, name=name, context=context)
+            self._tasks.append(task)
+            task.add_done_callback(
+                lambda t: self._handle_task_completion(t, future, caller_loop)
+            )
+        except Exception as e:
+            self._set_future_exception(future, e, caller_loop)
 
     def submit_coroutine(
         self,
@@ -82,64 +187,15 @@ class _ThreadEventLoop:
         try:
             caller_loop = asyncio.get_running_loop()
         except RuntimeError:
-            # No running loop, create unbound future
             caller_loop = None
 
-        if caller_loop:
-            future: asyncio.Future[T] = caller_loop.create_future()
-        else:
-            future = asyncio.Future()
+        future: asyncio.Future[T] = (
+            caller_loop.create_future() if caller_loop else asyncio.Future()
+        )
 
-        def _create_task() -> None:
-            try:
-                # Create task in the thread's event loop
-                task = self.loop.create_task(coro, name=name, context=context)
-                self._tasks.append(task)
-
-                # Chain the task result to the future
-                def _done_callback(t: asyncio.Task[T]) -> None:
-                    try:
-                        if t.cancelled():
-                            if caller_loop:
-                                def _cancel():
-                                    if not future.done():
-                                        future.cancel()
-                                caller_loop.call_soon_threadsafe(_cancel)
-                            else:
-                                if not future.done():
-                                    future.cancel()
-                        elif t.exception() is not None:
-                            exc = t.exception()
-                            if caller_loop:
-                                def _set_exc():
-                                    if not future.done():
-                                        future.set_exception(exc)
-                                caller_loop.call_soon_threadsafe(_set_exc)
-                            else:
-                                if not future.done():
-                                    future.set_exception(exc)
-                        else:
-                            result = t.result()
-                            if caller_loop:
-                                def _set_result():
-                                    if not future.done():
-                                        future.set_result(result)
-                                caller_loop.call_soon_threadsafe(_set_result)
-                            else:
-                                if not future.done():
-                                    future.set_result(result)
-                    except Exception:
-                        pass  # Future might already be done or other error
-
-                task.add_done_callback(_done_callback)
-            except Exception as e:
-                if not future.done():
-                    if caller_loop:
-                        caller_loop.call_soon_threadsafe(future.set_exception, e)
-                    else:
-                        future.set_exception(e)
-
-        self.loop.call_soon_threadsafe(_create_task)
+        self.loop.call_soon_threadsafe(
+            self._schedule_task, coro, future, caller_loop, name, context
+        )
         return future
 
 
@@ -186,6 +242,83 @@ class ThreadedTaskGroup:
 
         return self
 
+    async def _collect_task_exceptions(self, done_tasks: set[asyncio.Future[Any]]) -> list[BaseException]:
+        """Collect exceptions from completed tasks."""
+        exceptions: list[BaseException] = []
+        for task in done_tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except BaseException as e:
+                exceptions.append(e)
+        return exceptions
+
+    def _cancel_remaining_tasks(self, pending: set[asyncio.Future[Any]]) -> None:
+        """Cancel all pending tasks in thread event loops."""
+        for thread in self._threads:
+            thread.cancel_all_tasks()
+        for task in pending:
+            if not task.done():
+                task.cancel()
+
+    async def _process_completed_task(self, task: asyncio.Future[Any]) -> BaseException | None:
+        """Process a completed task and return its exception if any."""
+        try:
+            await task
+            return None
+        except asyncio.CancelledError:
+            return None
+        except BaseException as e:
+            return e
+
+    async def _check_pending_tasks(
+        self, pending: set[asyncio.Future[Any]]
+    ) -> tuple[set[asyncio.Future[Any]], list[BaseException]]:
+        """Check pending tasks for any that completed, collect their exceptions."""
+        still_pending = set()
+        exceptions: list[BaseException] = []
+
+        for task in pending:
+            if task.done():
+                exc = await self._process_completed_task(task)
+                if exc is not None:
+                    exceptions.append(exc)
+            else:
+                still_pending.add(task)
+
+        return still_pending, exceptions
+
+    def _raise_collected_exceptions(self, exceptions: list[BaseException]) -> None:
+        """Raise collected exceptions as single exception or ExceptionGroup."""
+        if not exceptions:
+            return
+
+        if len(exceptions) == 1:
+            raise exceptions[0]
+        else:
+            raise ExceptionGroup("Multiple task exceptions", exceptions)
+
+    async def _wait_for_tasks_with_cancellation(self) -> None:
+        """Wait for all tasks, cancelling remaining if any fails."""
+        pending = set(self._tasks)
+        exceptions: list[BaseException] = []
+        cancellation_triggered = False
+
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            new_exceptions = await self._collect_task_exceptions(done)
+            exceptions.extend(new_exceptions)
+
+            # Cancel remaining tasks if we found exceptions
+            if exceptions and not cancellation_triggered:
+                pending, more_exceptions = await self._check_pending_tasks(pending)
+                exceptions.extend(more_exceptions)
+                cancellation_triggered = True
+                self._cancel_remaining_tasks(pending)
+
+        self._raise_collected_exceptions(exceptions)
+
     async def __aexit__(
         self,
         exc_type: type[BaseException] | None,
@@ -194,68 +327,14 @@ class ThreadedTaskGroup:
     ) -> None:
         """Exit the context manager, wait for tasks, and cleanup threads."""
         try:
-            # Wait for all tasks to complete
-            if self._tasks:
-                if self._cancel_on_error:
-                    # Cancel remaining tasks if any task fails (TaskGroup behavior)
-                    pending = set(self._tasks)
-                    exceptions: list[BaseException] = []
-                    cancellation_triggered = False
+            if not self._tasks:
+                return
 
-                    while pending:
-                        # Wait for at least one task to complete
-                        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-
-                        # Collect exceptions from completed tasks
-                        for task in done:
-                            try:
-                                await task
-                            except asyncio.CancelledError:
-                                # Ignore cancellations from our own cancellation
-                                pass
-                            except BaseException as e:
-                                exceptions.append(e)
-
-                        # If we found exceptions and haven't cancelled yet, cancel remaining tasks
-                        if exceptions and not cancellation_triggered:
-                            # Before cancelling, check if any pending tasks are also done
-                            # This handles the race condition where multiple tasks fail simultaneously
-                            still_pending = set()
-                            for task in pending:
-                                if task.done():
-                                    # Task completed, collect its result
-                                    try:
-                                        await task
-                                    except asyncio.CancelledError:
-                                        pass
-                                    except BaseException as e:
-                                        exceptions.append(e)
-                                else:
-                                    still_pending.add(task)
-
-                            pending = still_pending
-                            cancellation_triggered = True
-
-                            # Cancel tasks in thread event loops
-                            for thread in self._threads:
-                                thread.cancel_all_tasks()
-                            # Cancel pending futures
-                            for task in pending:
-                                if not task.done():
-                                    task.cancel()
-
-                    # Raise exceptions
-                    if exceptions:
-                        if len(exceptions) == 1:
-                            raise exceptions[0]
-                        else:
-                            raise ExceptionGroup("Multiple task exceptions", exceptions)
-                else:
-                    # Don't cancel on error - just wait for all tasks
-                    # Don't raise exceptions in this mode; let caller handle them
-                    await asyncio.gather(*self._tasks, return_exceptions=True)
+            if self._cancel_on_error:
+                await self._wait_for_tasks_with_cancellation()
+            else:
+                await asyncio.gather(*self._tasks, return_exceptions=True)
         finally:
-            # Stop all thread event loops
             for thread in self._threads:
                 thread.stop()
 
