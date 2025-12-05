@@ -22,12 +22,12 @@ async def cpu_intensive_hash(data: bytes, iterations: int = 1000) -> str:
     return result.hex()
 
 
-async def cpu_intensive_json(data: dict[str, Any], iterations: int = 100) -> int:
+async def cpu_intensive_json(data: dict[str, Any], iterations: int = 1000) -> int:
     """CPU-intensive JSON serialization/deserialization."""
     result = 0
     for _ in range(iterations):
         serialized = json.dumps(data)
-        deserialized = json.loads(serialized)
+        _ = json.loads(serialized)
         result += len(serialized)
     return result
 
@@ -42,6 +42,15 @@ async def cpu_fibonacci(n: int) -> int:
     return b
 
 
+# === Blocking Workloads ===
+
+
+async def blocking_sleep(duration: float) -> float:
+    """Blocking sleep that locks the thread (simulates sync I/O)."""
+    time.sleep(duration)  # Plain sleep, not asyncio.sleep
+    return duration
+
+
 # === I/O-Bound Workloads ===
 
 
@@ -51,10 +60,10 @@ async def io_bound_sleep(duration: float) -> float:
     return duration
 
 
-async def io_bound_with_cpu(sleep_time: float, cpu_work: int = 100) -> tuple[float, int]:
+async def io_bound_with_cpu(sleep_time: float, cpu_work: int = 1000) -> tuple[float, float]:
     """Mixed I/O and CPU work."""
     await asyncio.sleep(sleep_time)
-    result = sum(i * i for i in range(cpu_work))
+    result = sum(i / (i + 1) for i in range(cpu_work))
     return sleep_time, result
 
 
@@ -206,6 +215,40 @@ async def test_performance_io_bound():
     print(f"asyncio.gather:         {asyncio_time:.3f}s (baseline)")
     print(f"thrasks (4 threads):    {thrasks_time:.3f}s ({asyncio_time / thrasks_time:.2f}x)")
     print(f"Note: For pure I/O, asyncio should be similar or faster (less overhead)")
+    print(f"{'=' * 60}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.benchmark
+async def test_performance_thread_locked_sleep():
+    """Compare blocking sleep: asyncio vs thrasks (demonstrates thrasks advantage)."""
+    num_tasks = 20
+    sleep_time = 0.1
+
+    # Test with standard asyncio.gather (will block the entire event loop)
+    start = time.perf_counter()
+    asyncio_results = await asyncio.gather(
+        *[blocking_sleep(sleep_time) for _ in range(num_tasks)]
+    )
+    asyncio_time = time.perf_counter() - start
+
+    # Test with thrasks (will run in parallel threads)
+    start = time.perf_counter()
+    thrasks_results = await threaded_gather(
+        *[blocking_sleep(sleep_time) for _ in range(num_tasks)],
+        num_threads=4,
+    )
+    thrasks_time = time.perf_counter() - start
+
+    assert asyncio_results == thrasks_results
+
+    print(f"\n{'=' * 60}")
+    print(f"Thread-Locked Sleep ({num_tasks} tasks, {sleep_time}s each)")
+    print(f"{'=' * 60}")
+    print(f"asyncio.gather:         {asyncio_time:.3f}s (runs sequentially!)")
+    print(f"thrasks (4 threads):    {thrasks_time:.3f}s ({asyncio_time / thrasks_time:.2f}x)")
+    print(f"Note: time.sleep() blocks the event loop in asyncio but not in thrasks")
+    print(f"      thrasks executes blocking operations in parallel threads")
     print(f"{'=' * 60}")
 
 
